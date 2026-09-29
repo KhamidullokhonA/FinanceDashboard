@@ -52,20 +52,58 @@ def load_transactions(csv_bytes):
     try:
         df = pd.read_csv(io.BytesIO(csv_bytes))
         df.columns = df.columns.str.strip()
+
+        # Handle CSVs containing "Type" instead of "Debit/Credit"
+        if "Type" in df.columns and "Debit/Credit" not in df.columns:
+            df = df.rename(columns={"Type": "Debit/Credit"})
+
         required = {"Date", "Details", "Amount", "Debit/Credit"}
         missing = required - set(df.columns)
+
         if missing:
-            raise ValueError(f"Missing CSV columns: {', '.join(sorted(missing))}")
+            raise ValueError(f"Missing CSV columns: {missing}")
+
+        # Convert amounts to numeric values
         df["Amount"] = pd.to_numeric(
-            df["Amount"].astype(str).str.replace(",", "", regex=False),
-            errors="raise",
+            df["Amount"]
+            .astype(str)
+            .str.replace(",", "", regex=False),
+            errors="raise"
         )
-        df["Date"] = pd.to_datetime(df["Date"], format="%d %b %Y", errors="raise")
+
+        # Handle multiple date formats
+        dates = df["Date"].astype(str).str.strip()
+
+        if dates.str.fullmatch(r"\d{1,2}-[A-Za-z]{3}").all():
+            # This CSV has no year, so you must provide one
+            dates = dates + "-2026"
+            df["Date"] = pd.to_datetime(
+                dates, format="%d-%b-%Y"
+            )
+        else:
+            df["Date"] = pd.to_datetime(
+                dates, format="%d %b %Y", errors="raise"
+            )
+
+        # Standardize transaction types
+        df["Debit/Credit"] = (
+            df["Debit/Credit"]
+            .astype(str)
+            .str.strip()
+            .str.title()
+            .replace({
+                "Withdrawal": "Debit",
+                "Deposit": "Credit"
+            })
+        )
+
         df["Details"] = df["Details"].fillna("").astype(str)
-        df["Debit/Credit"] = df["Debit/Credit"].astype(str).str.strip().str.title()
+
         df["Category"] = "Uncategorized"
+
         return df
-    except (ValueError, KeyError, pd.errors.ParserError, UnicodeDecodeError) as e:
+
+    except Exception as e:
         st.error(f"Error processing file: {e}")
         return None
 
